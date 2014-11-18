@@ -45,9 +45,9 @@ namespace EQ_Exporter
 
         public bool dbConnectionParamsSet { get; set; }
 
-        
-        
-        
+
+
+
         public Form1()
         {
             InitializeComponent();
@@ -56,7 +56,7 @@ namespace EQ_Exporter
         private void button1_Click(object sender, EventArgs e)
         {
 
-            //user clicked button to build excel file
+            //user clicked button to export data
 
             //open a dir dialog to get the source dir
 
@@ -145,8 +145,8 @@ namespace EQ_Exporter
 
                     }
 
-                    
-                    
+
+
                     //read the file
                     readfile(file.FullName, surveyName, partID, resultList);
 
@@ -155,25 +155,69 @@ namespace EQ_Exporter
 
                 }
 
+
+                //did the user want to do variable splitting?
+                if (checkBox1.Checked)
+                {
+                    //yes
+
+                    //get the skipped text
+                    string skipText = textBox1.Text;
+
+                    //get no-answer
+                    string noAnswerText= textBox2.Text;
+
+                    //get don't know
+                    string dontKnowText = textBox3.Text;
+
+                    //get not applicable
+                    string notAppText = textBox4.Text;
+
+                    if (string.IsNullOrWhiteSpace(skipText) || string.IsNullOrWhiteSpace(noAnswerText)  || string.IsNullOrWhiteSpace(dontKnowText) || string.IsNullOrWhiteSpace(notAppText))
+                    {
+
+                        MessageBox.Show("You must have values for each of the 4 skip types");
+                        return;
+
+
+                    }
+
+
+                    //split vars
+
+                    splitVars(resultList, skipText, noAnswerText, dontKnowText, notAppText);
+
+
+
+
+                }
+                
+
+
+
+
+
+
+
                 //did the user want to save as xlsx or mysql?
 
-                RadioButton selectedButton= null;
-            foreach (RadioButton rb in groupBox1.Controls)
-            {
-
-                if (rb.Checked)
+                RadioButton selectedButton = null;
+                foreach (RadioButton rb in groupBox1.Controls)
                 {
-                    selectedButton = rb;
-                    break;
+
+                    if (rb.Checked)
+                    {
+                        selectedButton = rb;
+                        break;
+
+
+                    }
+
 
 
                 }
 
-
-
-            }
-
-                string rbText= selectedButton.Text;
+                string rbText = selectedButton.Text;
 
                 if (rbText == "MySQL Database")
                 {
@@ -182,7 +226,7 @@ namespace EQ_Exporter
                     Form3 dbConnForm = new Form3(this);
                     dbConnForm.ShowDialog();
 
-                    if (! dbConnectionParamsSet)
+                    if (!dbConnectionParamsSet)
                     {
 
                         //user has cancelled
@@ -190,9 +234,9 @@ namespace EQ_Exporter
 
 
                     }
-                    
-                    
-                    
+
+
+
                     //try and connect to the DB
 
                     string connStr = "SERVER=" + dbHostName + ";DATABASE=" + dbName + ";UID=" + dbUserName + ";PASSWORD=" + dbPassword + ";PORT=" + dbPort;
@@ -216,9 +260,9 @@ namespace EQ_Exporter
 
 
                     }
-                    
-                    
-                    
+
+
+
                     //export to mysql
                     saveAsMySQL(resultList, db);
 
@@ -248,10 +292,10 @@ namespace EQ_Exporter
         }
 
 
-        
 
 
-        private void saveAsMySQL( List<EQresult> resultList, DB db)
+
+        private void saveAsMySQL(List<EQresult> resultList, DB db)
         {
 
 
@@ -276,7 +320,7 @@ namespace EQ_Exporter
 
 
                 MessageBox.Show("There was a problem sending the data to the database: " + ex.Message);
-               
+
 
 
             }
@@ -373,7 +417,7 @@ namespace EQ_Exporter
 
                 }
                  */
- 
+
 
 
 
@@ -389,11 +433,447 @@ namespace EQ_Exporter
         }
 
 
+        private EQresult copyResult(EQresult orig, string newCode, string newAnswer)
+        {
+
+            EQresult res = new EQresult();
+            res.partID = orig.partID;
+            res.surveyID = orig.surveyID;
+            res.qCode = newCode;
+            res.answer = newAnswer;
+
+            return res;
 
 
 
-       
+        }
 
+
+        private bool checkPatternMatch(string qCode, Regex pattern)
+        {
+
+            Match match = pattern.Match(qCode);
+
+            if (match.Success)
+            {
+                return true;
+
+
+            }
+            else
+            {
+
+                return false;
+
+            }
+
+
+
+
+        }
+
+
+
+
+        private void splitVars(List<EQresult> resultList, string missingStr, string noAnswerText, string dontKnowText, string notAppText)
+        {
+
+            //search for compound vars which can be split into chunks where each chunk is a new var
+            //missingStr is whatever was chosen to represent missing values
+
+
+            //delete list: what we need to remove from the data list
+            List<EQresult> dList = new List<EQresult>();
+
+
+            //add list: new things to add
+            List<EQresult> aList = new List<EQresult>();
+
+
+
+            Regex pattAVEW = new Regex(@"([WMY]):(\d+)");
+            Regex pattDEXAM = new Regex(@"^(\d+)/(\d+)/(\d+) .+");
+            Regex pattTAC2 = new Regex(@"^TAC2[A-E]-R$");
+            Regex pattBlood= new Regex(@"^(.+):(.+)$");
+            Regex pattTOB = new Regex(@"^(\d):(.+)$");
+
+
+            //blood samples
+            //mapping of the qCode of the result to the qCode of the corresponding barcode
+            var bloodMap= new Dictionary<string, string>();
+
+            bloodMap["PST"]= "PSTB1";
+            bloodMap["EDTA1A"]= "EDTAB1A";
+            bloodMap["EDTA1B"]= "EDTAB1B";
+            bloodMap["EDTA1C"]= "EDTAB1C";
+            bloodMap["PL1"]= "PLTB1";
+            bloodMap["SPU"]= "SPUB";
+            bloodMap["NAF1"]= "NAFB1";
+            bloodMap["NAF2"]= "NAFB2";
+            bloodMap["PST2"]= "PSTB2";
+
+
+            foreach (EQresult res in resultList)
+            {
+
+                string qCode = res.qCode;
+                string answer = res.answer;
+
+
+                //blood sample?
+                if(bloodMap.Keys.Contains(qCode)){
+
+                    //split the value into barcode and result
+                    //e.g. PST	1:111
+
+                    
+
+                    EQresult newRes;
+                    EQresult newResBC;  //barcode
+
+                    //was this skipped
+                    if (answer == missingStr || answer == noAnswerText || answer == dontKnowText || answer == notAppText)
+                    {
+                        //create second result (barcode)
+                        newRes = copyResult(res, bloodMap[qCode], answer);
+                        aList.Add(newRes);
+
+                    }
+                    else{
+
+                        //split into barcode and result
+
+                        Match match = pattBlood.Match(answer);
+                        string result = match.Groups[1].Value;
+                        string bc= match.Groups[2].Value;
+
+                        //result
+                        newRes = copyResult(res, qCode, result);
+                        aList.Add(newRes);
+
+                        //barcode
+                        newResBC = copyResult(res, bloodMap[qCode], bc);
+                        aList.Add(newResBC);
+
+                        //delete the original
+                        dList.Add(res);
+
+
+                    }
+
+
+                }
+
+
+
+                //AVEW	W:123
+
+                else if (qCode == "AVEW")
+                {
+                    //split into Weeks, Months, Years.
+                    
+
+                    EQresult avewRes;
+                    EQresult avemRes;
+                    EQresult aveyRes;
+
+                    //might have been skipped
+                    if (answer == missingStr || answer == noAnswerText || answer == dontKnowText || answer == notAppText)
+                    {
+
+                        avewRes = copyResult(res, "AVEW", answer);
+                        avemRes = copyResult(res, "AVEM", answer);
+                        aveyRes = copyResult(res, "AVEY", answer);
+
+
+                    }
+                    else
+                    {
+
+                        Match match = pattAVEW.Match(answer);
+
+                        string wmy = match.Groups[1].Value;
+                        string time = match.Groups[2].Value;
+
+                        
+
+
+                        if (wmy == "W")
+                        {
+
+                            //create 3 new results and remove this one
+                            avewRes = copyResult(res, "AVEW", time);
+                            avemRes = copyResult(res, "AVEM", missingStr);
+                            aveyRes = copyResult(res, "AVEY", missingStr);
+
+
+
+                        }
+                        else if (wmy == "M")
+                        {
+                            //create 3 new results and remove this one
+                            avewRes = copyResult(res, "AVEW", missingStr);
+                            avemRes = copyResult(res, "AVEM", time);
+                            aveyRes = copyResult(res, "AVEY", missingStr);
+
+
+                        }
+                        else if (wmy == "Y")
+                        {
+                            //create 3 new results and remove this one
+                            avewRes = copyResult(res, "AVEW", missingStr);
+                            avemRes = copyResult(res, "AVEM", missingStr);
+                            aveyRes = copyResult(res, "AVEY", time);
+
+
+                        }
+                        else
+                        {
+
+                            throw new Exception("Illegal prefix for code:AVEW");
+                        }
+
+
+                    }
+
+                    
+
+                    //remove original res
+                    dList.Add(res);
+
+                    //add 3 new ones
+                    aList.Add(avewRes);
+                    aList.Add(avemRes);
+                    aList.Add(aveyRes);
+
+
+
+
+                }
+
+                else if (qCode == "AVEW-2")
+                {
+
+                    //duplicate of AVEW: delete
+
+                    dList.Add(res);
+
+
+
+                }
+
+                else if (qCode == "CRWD")
+                {
+
+                    //delete CRWD
+                    dList.Add(res);
+
+
+
+                }
+
+                else if (qCode == "START")
+                {
+
+                    //change this to SITECODE
+
+                    EQresult newRes = copyResult(res, "SITECODE", answer);
+                    aList.Add(newRes);
+
+                    //delete original
+                    dList.Add(res);
+
+
+                }
+
+                
+
+
+                else if (checkPatternMatch(qCode, pattTAC2))
+                {
+
+                    //delete
+                    dList.Add(res);
+
+
+
+
+
+                }
+
+
+                else if (qCode == "TOB9")
+                {
+
+                    EQresult days;
+                    EQresult weeks;
+                    EQresult months;
+                    EQresult years;
+
+                    if (answer == missingStr || answer == noAnswerText || answer == dontKnowText || answer == notAppText)
+                    {
+                        days = copyResult(res, "TOB9D", answer);
+                        weeks = copyResult(res, "TOB9W", answer);
+                        months = copyResult(res, "TOB9M", answer);
+                        years = copyResult(res, "TOB9Y", answer);
+
+
+
+                    }
+                    else
+                    {
+
+                        Match match = pattTOB.Match(answer);
+
+                        string dwmy= match.Groups[1].Value;
+                        string timespan = match.Groups[2].Value;
+
+                        string answerDays="0";
+                        string answerWeeks="0";
+                        string answerMonths="0";
+                        string answerYears="0";
+
+                        if (dwmy == "1")
+                        {
+
+                            answerDays = timespan;
+                           
+
+                        }
+                        else if (dwmy == "2")
+                        {
+
+                            answerWeeks = timespan;
+                        }
+
+                        else if (dwmy == "3")
+                        {
+
+                            answerMonths = timespan;
+                        }
+
+                        else if (dwmy == "8")
+                        {
+
+                            answerYears = timespan;
+
+
+                        }
+                        else
+                        {
+
+                            throw new Exception("unknown timespan for TOB9");
+                        }
+
+
+
+
+                        days = copyResult(res, "TOB9D", answerDays);
+                        weeks = copyResult(res, "TOB9W", answerWeeks);
+                        months = copyResult(res, "TOB9M", answerMonths);
+                        years = copyResult(res, "TOB9Y", answerYears);
+
+
+
+                    }
+
+                    //remove original res
+                    dList.Add(res);
+
+                    //add 3 new ones
+                    aList.Add(days);
+                    aList.Add(weeks);
+                    aList.Add(months);
+                    aList.Add(years);
+
+
+
+
+                }
+
+
+
+
+
+                else if (qCode == "DEXAM")
+                {
+                    //DEXAM	22/08/2014 13:38:42
+
+                    //split into d/m/y and ignore timestamp part
+                    
+
+                    EQresult dexam;
+                    EQresult mexam;
+                    EQresult yexam;
+
+                    if (answer == missingStr || answer == noAnswerText || answer == dontKnowText || answer == notAppText)
+                    {
+                        dexam = copyResult(res, "DEXAM", answer);
+                        mexam = copyResult(res, "MEXAM", answer);
+                        yexam = copyResult(res, "YEXAM", answer);
+
+
+
+                    }
+                    else
+                    {
+
+                        Match match = pattDEXAM.Match(answer);
+
+                        string days = match.Groups[1].Value;
+                        string months = match.Groups[2].Value;
+                        string years = match.Groups[3].Value;
+
+                       
+
+                        dexam = copyResult(res, "DEXAM", days);
+                        mexam = copyResult(res, "MEXAM", months);
+                        yexam = copyResult(res, "YEXAM", years);
+
+
+
+                    }
+
+                    
+
+                    //remove original res
+                    dList.Add(res);
+
+                    //add 3 new ones
+                    aList.Add(dexam);
+                    aList.Add(mexam);
+                    aList.Add(yexam);
+
+
+
+
+                }
+
+
+
+
+            }
+
+            //build a new result-list, i.e. remove things in dList and add things in aList
+            foreach (EQresult res in dList)
+            {
+                //delete from main list
+                resultList.Remove(res);
+
+
+            }
+
+            //add new items
+            resultList.AddRange(aList);
+
+            
+
+
+
+
+
+
+        }
 
 
 
@@ -435,14 +915,14 @@ namespace EQ_Exporter
 
                 }
 
-                
+
 
             }
 
 
             catch (Exception ex1)
             {
-                MessageBox.Show("Error reading file:" + ex1.Message );
+                MessageBox.Show("Error reading file:" + ex1.Message);
 
 
             }
@@ -459,7 +939,7 @@ namespace EQ_Exporter
 
             }
 
-            
+
 
 
 
